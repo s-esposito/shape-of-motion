@@ -572,23 +572,46 @@ class Trainer:
         for _current_xys, _current_radii, _current_img_wh in zip(
             self._batched_xys, self._batched_radii, self._batched_img_wh
         ):
-            sel = _current_radii > 0
+            # _current_radii might have shape (C, G) or (C, G, 2)
+            # If it has the extra dimension, take max across it to get (C, G)
+            if _current_radii.ndim > 2:
+                radii_2d = _current_radii.max(dim=-1).values
+            else:
+                radii_2d = _current_radii
+            
+            sel = radii_2d > 0
             # Handle both 1D and 2D cases
             sel_indices = torch.where(sel)
+            if len(sel_indices) == 0:
+                continue  # Skip if no valid indices
             gidcs = sel_indices[1] if len(sel_indices) > 1 else sel_indices[0]
+            
+            # Ensure gidcs is at least 1-dimensional and not empty
+            if gidcs.ndim == 0:
+                gidcs = gidcs.unsqueeze(0)
+            if gidcs.numel() == 0:
+                continue
+            
             # normalize grads to [-1, 1] screen space
             xys_grad = _current_xys.grad.clone()
             xys_grad[..., 0] *= _current_img_wh[0] / 2.0 * batch_size
             xys_grad[..., 1] *= _current_img_wh[1] / 2.0 * batch_size
+            
+            # Index using the selection mask
+            selected_grad = xys_grad[sel]
+            
+            # Compute grad norm along last dimension
+            grad_norm = selected_grad.norm(dim=-1)
+            
             self.running_stats["xys_grad_norm_acc"].index_add_(
-                0, gidcs, xys_grad[sel].norm(dim=-1)
+                0, gidcs, grad_norm
             )
             self.running_stats["vis_count"].index_add_(
                 0, gidcs, torch.ones_like(gidcs, dtype=torch.int64)
             )
             max_radii = torch.maximum(
                 self.running_stats["max_radii"].index_select(0, gidcs),
-                _current_radii[sel] / max(_current_img_wh),
+                radii_2d[sel] / max(_current_img_wh),
             )
             self.running_stats["max_radii"].index_put((gidcs,), max_radii)
         return True
