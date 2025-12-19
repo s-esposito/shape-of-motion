@@ -573,7 +573,9 @@ class Trainer:
             self._batched_xys, self._batched_radii, self._batched_img_wh
         ):
             sel = _current_radii > 0
-            gidcs = torch.where(sel)[1]
+            # Handle both 1D and 2D cases
+            sel_indices = torch.where(sel)
+            gidcs = sel_indices[1] if len(sel_indices) > 1 else sel_indices[0]
             # normalize grads to [-1, 1] screen space
             xys_grad = _current_xys.grad.clone()
             xys_grad[..., 0] *= _current_img_wh[0] / 2.0 * batch_size
